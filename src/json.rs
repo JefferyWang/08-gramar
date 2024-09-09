@@ -74,19 +74,26 @@ fn parse_bool(input: &mut &str) -> PResult<bool> {
     alt(("true", "false")).parse_to().parse_next(input)
 }
 
-// FIXME: num parse doesn't work with scientific notation, fix it
 fn parse_num(input: &mut &str) -> PResult<Num> {
-    let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
+    let sign = opt(alt(("+", "-")))
+        .map(|s| s.is_some_and(|f| f == "-"))
+        .parse_next(input)?;
     let num = digit1.parse_to::<i64>().parse_next(input)?;
     let ret: Result<(), ErrMode<ContextError>> = ".".value(()).parse_next(input);
     if ret.is_ok() {
         let frac = digit1.parse_to::<i64>().parse_next(input)?;
-        let v = format!("{}.{}", num, frac).parse::<f64>().unwrap();
-        Ok(if sign {
-            Num::Float(-v as _)
-        } else {
-            Num::Float(v as _)
-        })
+        let mut v = format!("{}.{}", num, frac).parse::<f64>().unwrap();
+
+        let e: Result<(), ErrMode<ContextError>> = alt(("e", "E")).value(()).parse_next(input);
+        if e.is_ok() {
+            let e_sign = opt(alt(("+", "-")))
+                .map(|s| s.is_some_and(|f| f == "-"))
+                .parse_next(input)?;
+            let exp: i64 = digit1.parse_to::<i64>().parse_next(input)?;
+            let exp = if e_sign { -exp } else { exp };
+            v *= 10f64.powi(exp as i32);
+        }
+        Ok(if sign { Num::Float(-v) } else { Num::Float(v) })
     } else {
         Ok(if sign { Num::Int(-num) } else { Num::Int(num) })
     }
@@ -207,6 +214,23 @@ mod tests {
                 JsonValue::String("c".to_string())
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_science_notation() -> PResult<(), ContextError> {
+        let input = "1.23e4";
+        let result = parse_num(&mut (&*input))?;
+        assert_eq!(result, Num::Float(1.23e4));
+
+        let input = "1.23e+4";
+        let result = parse_num(&mut (&*input))?;
+        assert_eq!(result, Num::Float(1.23e4));
+
+        let input = "1.23e-4";
+        let result = parse_num(&mut (&*input))?;
+        assert_eq!(result, Num::Float(1.23e-4));
+
         Ok(())
     }
 
